@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -121,28 +122,37 @@ fun ChatScreen(viewModel: MainViewModel) {
     }
 
     Scaffold(
-        modifier = Modifier
-            .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
-            .imePadding(),
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            TopAppBarHeader(
-                roomTitle = activeRoom?.name ?: "Ruang Obrolan",
-                persona = activeRoom?.persona ?: "General",
-                engineMode = uiState.settings.engineMode,
-                cloudModel = uiState.settings.cloudModelName,
-                hardwareBadge = uiState.hardwareInfo?.badgeLabel ?: "⚡ CPU",
-                roomChunksCount = uiState.roomChunksCount,
-                onOpenRooms = { showRoomSheet = true },
-                onOpenDocs = { showDocSheet = true },
-                onOpenModels = { showModelSheet = true },
-                onOpenSettings = { showSettingsSheet = true },
-                onShareMarkdown = { viewModel.shareMarkdown() }
-            )
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .statusBarsPadding()
+            ) {
+                TopAppBarHeader(
+                    roomTitle = activeRoom?.name ?: "Ruang Obrolan",
+                    persona = activeRoom?.persona ?: "General",
+                    engineMode = uiState.settings.engineMode,
+                    cloudModel = uiState.settings.cloudModelName,
+                    hardwareBadge = uiState.hardwareInfo?.badgeLabel ?: "⚡ CPU",
+                    roomChunksCount = uiState.roomChunksCount,
+                    onOpenRooms = { showRoomSheet = true },
+                    onOpenDocs = { showDocSheet = true },
+                    onOpenModels = { showModelSheet = true },
+                    onOpenSettings = { showSettingsSheet = true },
+                    onShareMarkdown = { viewModel.shareMarkdown() }
+                )
+            }
         },
         bottomBar = {
-            Column {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .navigationBarsPadding()
+                    .imePadding()
+            ) {
                 // Smart Routing Tip
                 AnimatedVisibility(visible = uiState.routingSuggestion != null) {
                     uiState.routingSuggestion?.let { tip ->
