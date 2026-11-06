@@ -191,6 +191,7 @@ Jawaban Faktual Berdasarkan Dokumen:"""
         }
 
         // High-Fidelity Educational Fallback Simulator (Matching referensi/core/edge_engine.py)
+        emit("⚠️ *[Model Gemma 4 belum aktif di memori atau izin file belum diberikan. Berjalan dalam mode simulasi.]*\n\n")
         for (token in runFallbackSimulation(prompt, contextChunks)) {
             emit(token)
             delay(15) // Simulasi kecepatan token streaming yang halus

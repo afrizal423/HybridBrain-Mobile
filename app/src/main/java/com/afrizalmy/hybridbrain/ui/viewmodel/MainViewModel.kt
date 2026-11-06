@@ -98,10 +98,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun initEdgeEngineIfAvailable() {
+        if (edgeEngine.isReady()) return
         viewModelScope.launch(Dispatchers.IO) {
             val gemmaFile = modelDownloader.getModelFile(ModelDownloader.GEMMA_FILENAME)
-            if (gemmaFile.exists()) {
-                edgeEngine.initializeEngine(gemmaFile, _uiState.value.settings.preferredBackend)
+            if (gemmaFile.exists() && gemmaFile.canRead()) {
+                val success = edgeEngine.initializeEngine(gemmaFile, _uiState.value.settings.preferredBackend)
+                if (success) {
+                    _uiState.update { it.copy(statusToast = "✅ Model Gemma 4 (${edgeEngine.getActiveBackend()}) siap!") }
+                }
             }
         }
     }
