@@ -4,12 +4,17 @@ import android.content.Context
 import com.afrizalmy.hybridbrain.data.model.DocumentChunk
 import com.afrizalmy.hybridbrain.data.model.RoomPersonas
 import com.google.ai.edge.litertlm.Backend
+import com.google.ai.edge.litertlm.Content
 import com.google.ai.edge.litertlm.ConversationConfig
 import com.google.ai.edge.litertlm.Engine
 import com.google.ai.edge.litertlm.EngineConfig
+import com.google.ai.edge.litertlm.Message
+import com.google.ai.edge.litertlm.MessageCallback
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
@@ -179,12 +184,42 @@ Jawaban Faktual Berdasarkan Dokumen:"""
         if (isRealModelReady && engine != null) {
             try {
                 val conversation = engine.createConversation()
-                val flowResponse = conversation.sendMessageAsync(formattedPrompt)
-                flowResponse.collect { token ->
-                    emit(token.toString())
+                try {
+                    val streamFlow = callbackFlow<String> {
+                        val callback = object : MessageCallback {
+                            override fun onMessage(message: Message) {
+                                val textList = message.contents.contents
+                                    .filterIsInstance<Content.Text>()
+                                    .map { it.text }
+                                val text = if (textList.isNotEmpty()) textList.joinToString("") else message.toString()
+                                if (text.isNotEmpty()) {
+                                    trySend(text)
+                                }
+                            }
+
+                            override fun onDone() {
+                                channel.close()
+                            }
+
+                            override fun onError(throwable: Throwable) {
+                                channel.close(throwable)
+                            }
+                        }
+
+                        conversation.sendMessageAsync(formattedPrompt, callback)
+
+                        awaitClose {
+                            // cleanup flow
+                        }
+                    }
+
+                    streamFlow.collect { token ->
+                        emit(token)
+                    }
+                    return@flow
+                } finally {
+                    conversation.close()
                 }
-                conversation.close()
-                return@flow
             } catch (e: Exception) {
                 emit("\n⚠️ [Kendala inferensi LiteRT: ${e.message}. Beralih ke fallback edukasi.]\n\n")
             }
@@ -203,13 +238,16 @@ Jawaban Faktual Berdasarkan Dokumen:"""
         if (isRealModelReady && engine != null) {
             try {
                 val conversation = engine.createConversation()
-                val sb = java.lang.StringBuilder()
-                val flowResponse = conversation.sendMessageAsync(prompt)
-                flowResponse.collect { token ->
-                    sb.append(token.toString())
+                try {
+                    val message = conversation.sendMessage(prompt)
+                    val textList = message.contents.contents
+                        .filterIsInstance<Content.Text>()
+                        .map { it.text }
+                    val text = if (textList.isNotEmpty()) textList.joinToString("") else message.toString()
+                    return@withContext text.trim()
+                } finally {
+                    conversation.close()
                 }
-                conversation.close()
-                return@withContext sb.toString().trim()
             } catch (e: Exception) {
                 e.printStackTrace()
             }
