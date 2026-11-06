@@ -1,0 +1,25 @@
+*.iml
+.gradle
+/local.properties
+/.idea
+.DS_Store
+/build
+/app/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Referensi folder & large model weights
+referensi/
+models/
+*.litertlm
+*.tflite
+*.bin
+*.tmp
+
+# Local storage and database
+*.db
+*.sqlite
+*.sqlite3
+*.log
