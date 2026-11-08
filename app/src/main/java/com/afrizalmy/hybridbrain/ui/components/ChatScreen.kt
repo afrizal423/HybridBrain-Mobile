@@ -4,6 +4,8 @@ import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -36,6 +38,7 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lightbulb
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
@@ -52,6 +55,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -66,8 +70,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -90,6 +96,7 @@ fun ChatScreen(viewModel: MainViewModel) {
     val uiState by viewModel.uiState.collectAsState()
     val context = LocalContext.current
     val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
 
     var showModelSheet by remember { mutableStateOf(false) }
     var showDocSheet by remember { mutableStateOf(false) }
@@ -106,10 +113,47 @@ fun ChatScreen(viewModel: MainViewModel) {
     val activeRoom = uiState.rooms[uiState.activeRoomId]
     val messages = activeRoom?.messages ?: emptyList()
 
-    // Scroll to bottom when new messages arrive
-    LaunchedEffect(messages.size, uiState.streamingText, uiState.livePtacLogs.size) {
-        if (messages.isNotEmpty()) {
-            listState.animateScrollToItem(messages.size)
+    var userScrolledUp by remember { mutableStateOf(false) }
+    var isFingerDown by remember { mutableStateOf(false) }
+
+    // Deteksi jika pengguna secara manual scroll ke atas menjauhi bagian terbawah
+    LaunchedEffect(listState.isScrollInProgress) {
+        if (!listState.isScrollInProgress) {
+            val layoutInfo = listState.layoutInfo
+            val visibleItems = layoutInfo.visibleItemsInfo
+            if (visibleItems.isNotEmpty()) {
+                val lastVisibleIndex = visibleItems.last().index
+                val totalCount = layoutInfo.totalItemsCount
+                // Jika masih dalam jarak 2 item terakhir, anggap tetap berada di dasar
+                if (lastVisibleIndex >= totalCount - 2) {
+                    userScrolledUp = false
+                } else {
+                    userScrolledUp = true
+                }
+            }
+        }
+    }
+
+    // Scroll ke dasar saat ada pesan baru ditambahkan (pengguna mengirim / asisten selesai)
+    LaunchedEffect(messages.size) {
+        userScrolledUp = false
+        val total = listState.layoutInfo.totalItemsCount
+        if (total > 0) {
+            listState.animateScrollToItem(total - 1)
+        }
+    }
+
+    // Auto-scroll mengikuti respon teks panjang (streaming) secara mulus
+    // TIDAK AKAN mengunci gesture jari pengguna (single-touch scroll tetap responsif & bebas)
+    LaunchedEffect(uiState.streamingText, uiState.livePtacLogs.size) {
+        if (uiState.isGenerating && (uiState.streamingText.isNotEmpty() || uiState.livePtacLogs.isNotEmpty())) {
+            if (!userScrolledUp && !isFingerDown && !listState.isScrollInProgress) {
+                val total = listState.layoutInfo.totalItemsCount
+                if (total > 0) {
+                    // Scroll ke item spacer paling bawah dengan offset agar baris teks paling baru selalu terlihat
+                    listState.scrollToItem(total - 1, scrollOffset = 10000)
+                }
+            }
         }
     }
 
@@ -183,6 +227,7 @@ fun ChatScreen(viewModel: MainViewModel) {
                         if (inputPrompt.isNotBlank() && !uiState.isGenerating) {
                             val textToSend = inputPrompt
                             inputPrompt = ""
+                            userScrolledUp = false
                             viewModel.sendMessage(textToSend)
                         }
                     }
@@ -190,40 +235,84 @@ fun ChatScreen(viewModel: MainViewModel) {
             }
         }
     ) { innerPadding ->
-        LazyColumn(
-            state = listState,
+        Box(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            item { Spacer(modifier = Modifier.height(6.dp)) }
+            LazyColumn(
+                state = listState,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = 14.dp)
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope {
+                            while (true) {
+                                val event = awaitPointerEvent()
+                                isFingerDown = event.changes.any { it.pressed }
+                            }
+                        }
+                    },
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                item { Spacer(modifier = Modifier.height(6.dp)) }
 
-            items(messages, key = { it.id }) { msg ->
-                ChatMessageItem(message = msg)
-            }
-
-            // Live PTAC Log Card
-            if (uiState.isGenerating && uiState.livePtacLogs.isNotEmpty()) {
-                item {
-                    LivePtacCard(logs = uiState.livePtacLogs)
+                items(messages, key = { it.id }) { msg ->
+                    ChatMessageItem(message = msg)
                 }
+
+                // Live PTAC Log Card
+                if (uiState.isGenerating && uiState.livePtacLogs.isNotEmpty()) {
+                    item {
+                        LivePtacCard(logs = uiState.livePtacLogs)
+                    }
+                }
+
+                // Live Streaming Response Bubble
+                if (uiState.isGenerating && uiState.streamingText.isNotEmpty()) {
+                    item {
+                        LiveStreamingItem(
+                            text = uiState.streamingText,
+                            engineMode = uiState.settings.engineMode,
+                            cloudModel = uiState.settings.cloudModelName,
+                            isPtac = uiState.settings.ptacEnabled
+                        )
+                    }
+                }
+
+                item { Spacer(modifier = Modifier.height(12.dp)) }
             }
 
-            // Live Streaming Response Bubble
-            if (uiState.isGenerating && uiState.streamingText.isNotEmpty()) {
-                item {
-                    LiveStreamingItem(
-                        text = uiState.streamingText,
-                        engineMode = uiState.settings.engineMode,
-                        cloudModel = uiState.settings.cloudModelName,
-                        isPtac = uiState.settings.ptacEnabled
+            // Tombol Melayang "Scroll ke Bawah" saat pengguna membaca chat di atas
+            AnimatedVisibility(
+                visible = userScrolledUp && (uiState.isGenerating || listState.canScrollForward),
+                enter = fadeIn() + scaleIn(),
+                exit = fadeOut() + scaleOut(),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 12.dp)
+            ) {
+                SmallFloatingActionButton(
+                    onClick = {
+                        userScrolledUp = false
+                        coroutineScope.launch {
+                            val total = listState.layoutInfo.totalItemsCount
+                            if (total > 0) {
+                                listState.animateScrollToItem(total - 1)
+                            }
+                        }
+                    },
+                    containerColor = BrandIndigo,
+                    contentColor = Color.White,
+                    shape = CircleShape
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.KeyboardArrowDown,
+                        contentDescription = "Scroll ke pesan terbaru",
+                        modifier = Modifier.size(20.dp)
                     )
                 }
             }
-
-            item { Spacer(modifier = Modifier.height(12.dp)) }
         }
     }
 
