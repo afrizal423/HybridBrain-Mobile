@@ -97,6 +97,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import com.afrizalmy.hybridbrain.data.model.AttachmentMeta
+import com.mikepenz.markdown.m3.Markdown
+import com.mikepenz.markdown.m3.markdownColor
 import java.io.File
 import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
@@ -790,12 +792,27 @@ fun ChatMessageItem(
                     }
                 }
 
-                Text(
-                    text = message.content,
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurface
-                )
+                if (isUser) {
+                    Text(
+                        text = message.content,
+                        fontSize = 14.sp,
+                        lineHeight = 20.sp,
+                        color = Color.White
+                    )
+                } else {
+                    Markdown(
+                        content = message.content,
+                        colors = markdownColor(
+                            text = MaterialTheme.colorScheme.onSurface,
+                            codeText = MaterialTheme.colorScheme.onSurface,
+                            inlineCodeText = BrandIndigo,
+                            linkText = BrandIndigo,
+                            codeBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                            inlineCodeBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                            dividerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                        )
+                    )
+                }
 
                 // Expandable PTAC Logs
                 if (message.ptacLogs.isNotEmpty()) {
@@ -977,11 +994,18 @@ fun LiveStreamingItem(text: String, engineMode: EngineMode, cloudModel: String, 
             shape = RoundedCornerShape(14.dp)
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
-                Text(
-                    text = "$text▌",
-                    fontSize = 14.sp,
-                    lineHeight = 20.sp,
-                    color = MaterialTheme.colorScheme.onSurface
+                Markdown(
+                    content = text.ifBlank { "..." },
+                    colors = markdownColor(
+                        text = MaterialTheme.colorScheme.onSurface,
+                        codeText = MaterialTheme.colorScheme.onSurface,
+                        inlineCodeText = BrandIndigo,
+                        linkText = BrandIndigo,
+                        codeBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.8f),
+                        inlineCodeBackground = MaterialTheme.colorScheme.surface.copy(alpha = 0.6f),
+                        dividerColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    ),
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
         }

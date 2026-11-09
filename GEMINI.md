@@ -35,6 +35,7 @@
 | **Vector Database** | **Android SQLite (`SQLiteOpenHelper`)** | Embedded vector store supporting 768-dimensional Cosine Similarity, metadata indexing, and room isolation. |
 | **Network & Ingestion** | **OkHttp 4.12.0** | High-performance streaming model download and Gemini SSE streaming. |
 | **Multimodal Extractors** | **PdfRenderer / BitmapFactory / MediaMetadataRetriever** | Extracts text and structural metadata from PDF, TXT, MD, Images, and Audio. |
+| **Markdown Renderer** | **`com.mikepenz:multiplatform-markdown-renderer-m3`** | AST-based Compose Markdown renderer for live streaming and chat history bubbles. |
 
 ---
 

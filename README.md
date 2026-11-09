@@ -57,15 +57,19 @@ Sesuai permintaan desain privasi dan transparansi:
    - 💻 *Code Pair Programmer* (Clean code & arsitektur sistem)
    - ⚡ *Executive Summarizer* (TL;DR & Actionable points)
    - 🎨 *Custom Persona* (Instruksi sistem kustom)
-6. **Multimodal Ingestion (RAG)**:
-   - Ekstraksi dokumen PDF, catatan teks/markdown, gambar, dan rekaman audio.
-   - Database vektor lokal SQLite dengan pencarian semantik Cosine Similarity 768 dimensi.
+6. **Multimodal Ingestion (RAG & Per-Bubble Attachment)**:
+   - **Attachment Langsung di Chat (Opsi C Hybrid)**: Pengguna dapat melampirkan berkas (PDF, Gambar, Audio, TXT) langsung pada kolom chat untuk dianalisis secara instan (*ephemeral*), disertai tombol 1-klik *"Simpan ke Memori Room"* jika ingin dokumen tersebut diindeks permanen ke database vektor room.
+   - **Vision-Assisted Ingestion**: Ekstraksi cerdas pada dokumen visual dan PDF berbasis pindaian sehingga menghasilkan representasi teks terstruktur yang ramah terhadap alokasi KV-cache model lokal Gemma.
+   - Database vektor lokal SQLite dengan pencarian semantik Cosine Similarity 768 dimensi dan isolasi per-room.
 7. **🔍 Source Context Inspector**:
    - Akordeon di bawah setiap respon asisten yang menampilkan nomor chunk, nama berkas, nomor halaman, persentase relevansi, dan kutipan teks dokumen.
 8. **📥 Ekspor Chat ke Format Markdown (.md)**:
    - Ekspor riwayat obrolan lengkap beserta tabel metadata dan rujukan sitasi RAG yang dapat langsung disimpan atau dibagikan via Android Share Sheet.
 9. **💡 Smart Auto-Routing Heuristic**:
    - Analisis cerdas yang merekomendasikan pengguna beralih ke Mode Cloud jika kueri membutuhkan informasi eksternal terkini atau memiliki struktur penalaran multi-tahap yang sangat kompleks.
+10. **🎨 Rich Markdown Response Viewer**:
+    - Respons asisten AI (baik saat live streaming maupun riwayat percakapan) di-render secara dinamis menggunakan AST Markdown renderer natif Material 3 (`multiplatform-markdown-renderer-m3`).
+    - Heading bertingkat, blok kode (*syntax styling*), kutipan, pemisah horizontal, bullet points, dan daftar berangka ditampilkan dengan tipografi elegan yang menyatu dengan tema gelap HybridBrain.
 
 ---
 

@@ -65,6 +65,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.ai.edge.litertlm:litertlm-android:0.18.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer:0.26.0")
+    implementation("com.mikepenz:multiplatform-markdown-renderer-m3:0.26.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
