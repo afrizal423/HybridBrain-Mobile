@@ -1,6 +1,11 @@
 package com.afrizalmy.hybridbrain.engine
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.pdf.PdfRenderer
+import android.os.ParcelFileDescriptor
 import com.afrizalmy.hybridbrain.data.model.DocumentChunk
 import com.afrizalmy.hybridbrain.data.model.RoomPersonas
 import com.google.ai.edge.litertlm.Backend
@@ -19,6 +24,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.FileOutputStream
 
 class EdgeEngine(private val context: Context) {
 
@@ -103,6 +109,8 @@ Jawaban Faktual Berdasarkan Dokumen:"""
             val config = EngineConfig(
                 modelPath = path,
                 backend = backend,
+                visionBackend = backend,
+                maxNumImages = 1,
                 cacheDir = context.cacheDir.absolutePath
             )
             val engine = Engine(config)
@@ -119,6 +127,8 @@ Jawaban Faktual Berdasarkan Dokumen:"""
                     val config = EngineConfig(
                         modelPath = path,
                         backend = Backend.CPU(),
+                        visionBackend = Backend.CPU(),
+                        maxNumImages = 1,
                         cacheDir = context.cacheDir.absolutePath
                     )
                     val engine = Engine(config)
@@ -147,7 +157,9 @@ Jawaban Faktual Berdasarkan Dokumen:"""
     fun generateStream(
         prompt: String,
         contextChunks: List<DocumentChunk>? = null,
-        systemInstruction: String = RoomPersonas.DEFAULT_SYSTEM_PROMPT
+        systemInstruction: String = RoomPersonas.DEFAULT_SYSTEM_PROMPT,
+        attachmentFile: File? = null,
+        attachmentMime: String? = null
     ): Flow<String> = flow<String> {
         // KV-Cache Budget Guard: Max 2 chunks, max 2200 chars
         val formattedPrompt = if (!contextChunks.isNullOrEmpty()) {
@@ -206,7 +218,49 @@ Jawaban Faktual Berdasarkan Dokumen:"""
                             }
                         }
 
-                        conversation.sendMessageAsync(formattedPrompt, callback)
+                        if (attachmentFile != null && attachmentFile.exists()) {
+                            val mime = (attachmentMime ?: "").lowercase()
+                            val fname = attachmentFile.name.lowercase()
+
+                            when {
+                                mime.startsWith("image/") || fname.endsWith(".png") || fname.endsWith(".jpg") || fname.endsWith(".jpeg") || fname.endsWith(".webp") || fname.endsWith(".bmp") -> {
+                                    val msg = Message.of(
+                                        Content.ImageFile(attachmentFile.absolutePath),
+                                        Content.Text(formattedPrompt)
+                                    )
+                                    conversation.sendMessageAsync(msg, callback)
+                                }
+                                mime.startsWith("audio/") || fname.endsWith(".wav") || fname.endsWith(".mp3") || fname.endsWith(".ogg") || fname.endsWith(".m4a") -> {
+                                    val msg = Message.of(
+                                        Content.AudioFile(attachmentFile.absolutePath),
+                                        Content.Text(formattedPrompt)
+                                    )
+                                    conversation.sendMessageAsync(msg, callback)
+                                }
+                                mime == "application/pdf" || fname.endsWith(".pdf") -> {
+                                    val renderedImg = renderPdfFirstPage(attachmentFile)
+                                    if (renderedImg != null && renderedImg.exists()) {
+                                        val msg = Message.of(
+                                            Content.ImageFile(renderedImg.absolutePath),
+                                            Content.Text(formattedPrompt)
+                                        )
+                                        conversation.sendMessageAsync(msg, callback)
+                                    } else {
+                                        conversation.sendMessageAsync(formattedPrompt, callback)
+                                    }
+                                }
+                                mime.startsWith("text/") || fname.endsWith(".txt") || fname.endsWith(".md") || fname.endsWith(".csv") || fname.endsWith(".json") -> {
+                                    val txt = try { attachmentFile.readText(Charsets.UTF_8).take(2500) } catch (e: Exception) { "" }
+                                    val textPrompt = "[Lampiran Berkas Teks: ${attachmentFile.name}]\n$txt\n\n$formattedPrompt"
+                                    conversation.sendMessageAsync(textPrompt, callback)
+                                }
+                                else -> {
+                                    conversation.sendMessageAsync(formattedPrompt, callback)
+                                }
+                            }
+                        } else {
+                            conversation.sendMessageAsync(formattedPrompt, callback)
+                        }
 
                         awaitClose {
                             // cleanup flow
@@ -227,7 +281,7 @@ Jawaban Faktual Berdasarkan Dokumen:"""
 
         // High-Fidelity Educational Fallback Simulator (Matching referensi/core/edge_engine.py)
         emit("⚠️ *[Model Gemma 4 belum aktif di memori atau izin file belum diberikan. Berjalan dalam mode simulasi.]*\n\n")
-        for (token in runFallbackSimulation(prompt, contextChunks)) {
+        for (token in runFallbackSimulation(prompt, contextChunks, attachmentFile?.name)) {
             emit(token)
             delay(15) // Simulasi kecepatan token streaming yang halus
         }
@@ -255,9 +309,13 @@ Jawaban Faktual Berdasarkan Dokumen:"""
         ""
     }
 
-    private fun runFallbackSimulation(query: String, contextChunks: List<DocumentChunk>?): List<String> {
+    private fun runFallbackSimulation(query: String, contextChunks: List<DocumentChunk>?, attachmentFilename: String? = null): List<String> {
         val qLower = query.lowercase()
         val reply = when {
+            !attachmentFilename.isNullOrBlank() -> {
+                "Saya telah menerima dan menganalisis file lampiran **`$attachmentFilename`** secara offline.\n\n" +
+                        "Berdasarkan pertanyaan Anda *\"$query\"*, informasi data/visual pada lampiran ini berhasil diekstrak dan diproses."
+            }
             listOf("siapa", "kamu", "halo", "hai", "perkenalkan", "apa kamu").any { qLower.contains(it) } -> {
                 "Halo! Saya adalah **HybridBrain** yang ditenagai oleh model lokal **Gemma 4 (Google AI Edge / LiteRT)**.\n\n" +
                         "Saya berjalan **100% secara offline** langsung di HP Android Anda tanpa menggunakan internet:\n" +
@@ -283,6 +341,66 @@ Jawaban Faktual Berdasarkan Dokumen:"""
         }
 
         return reply.split(" ").map { "$it " }
+    }
+
+    fun renderPdfFirstPage(pdfFile: File): File? {
+        return try {
+            val pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
+            val renderer = PdfRenderer(pfd)
+            if (renderer.pageCount == 0) {
+                renderer.close()
+                pfd.close()
+                return null
+            }
+            val page = renderer.openPage(0)
+            val scale = 1.5f
+            val width = (page.width * scale).toInt()
+            val height = (page.height * scale).toInt()
+            val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            canvas.drawColor(Color.WHITE)
+            page.render(bitmap, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+            page.close()
+            renderer.close()
+            pfd.close()
+
+            val outFile = File(context.cacheDir, "pdf_render_${System.currentTimeMillis()}.png")
+            FileOutputStream(outFile).use { fos ->
+                bitmap.compress(Bitmap.CompressFormat.PNG, 90, fos)
+            }
+            bitmap.recycle()
+            outFile
+        } catch (e: Exception) {
+            e.printStackTrace()
+            null
+        }
+    }
+
+    suspend fun describeImage(
+        imageFile: File,
+        prompt: String = "Transkripsikan seluruh teks, angka, rincian tabel, dan informasi penting dari dokumen/gambar ini secara lengkap dan terstruktur."
+    ): String = withContext(Dispatchers.IO) {
+        val engine = activeEngine
+        if (!isRealModelReady || engine == null) return@withContext ""
+        try {
+            val conversation = engine.createConversation()
+            try {
+                val msg = Message.of(
+                    Content.ImageFile(imageFile.absolutePath),
+                    Content.Text(prompt)
+                )
+                val response = conversation.sendMessage(msg)
+                val textList = response.contents.contents
+                    .filterIsInstance<Content.Text>()
+                    .map { it.text }
+                if (textList.isNotEmpty()) textList.joinToString("") else response.toString()
+            } finally {
+                conversation.close()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
     }
 
     fun close() {

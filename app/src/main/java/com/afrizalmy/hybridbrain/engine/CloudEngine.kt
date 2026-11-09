@@ -1,5 +1,6 @@
 package com.afrizalmy.hybridbrain.engine
 
+import android.util.Base64
 import com.afrizalmy.hybridbrain.data.model.DocumentChunk
 import com.afrizalmy.hybridbrain.data.model.RoomPersonas
 import kotlinx.coroutines.Dispatchers
@@ -105,7 +106,10 @@ Jawaban Terstruktur Anda:"""
         modelName: String,
         prompt: String,
         contextChunks: List<DocumentChunk>? = null,
-        systemInstruction: String = RoomPersonas.DEFAULT_SYSTEM_PROMPT
+        systemInstruction: String = RoomPersonas.DEFAULT_SYSTEM_PROMPT,
+        attachmentBytes: ByteArray? = null,
+        attachmentMime: String? = null,
+        attachmentFilename: String? = null
     ): Flow<String> = flow {
         val cleanKey = apiKey.trim()
         if (cleanKey.length < 10) {
@@ -133,12 +137,23 @@ Jawaban Terstruktur Anda:"""
                     })
                 }
 
+                val userParts = JSONArray()
+                if (attachmentBytes != null && !attachmentMime.isNullOrBlank()) {
+                    val base64Data = Base64.encodeToString(attachmentBytes, Base64.NO_WRAP)
+                    val inlineData = JSONObject().apply {
+                        put("mime_type", attachmentMime)
+                        put("data", base64Data)
+                    }
+                    userParts.put(JSONObject().apply {
+                        put("inline_data", inlineData)
+                    })
+                }
+                userParts.put(JSONObject().put("text", formattedPrompt))
+
                 val contents = JSONArray().apply {
                     put(JSONObject().apply {
                         put("role", "user")
-                        put("parts", JSONArray().apply {
-                            put(JSONObject().put("text", formattedPrompt))
-                        })
+                        put("parts", userParts)
                     })
                 }
                 put("contents", contents)
@@ -248,5 +263,61 @@ Jawaban Terstruktur Anda:"""
             e.printStackTrace()
         }
         null
+    }
+
+    suspend fun transcribeVisualContent(
+        imageBytes: ByteArray,
+        mimeType: String = "image/png",
+        prompt: String = "Transkripsikan seluruh teks, angka, rincian tabel, dan informasi penting dari dokumen/gambar ini secara lengkap, akurat, dan terstruktur untuk pencarian informasi (RAG).",
+        apiKey: String,
+        modelName: String = "gemini-3.8-flash"
+    ): String = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.length < 10) return@withContext ""
+
+        try {
+            val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$cleanKey"
+            val base64Data = Base64.encodeToString(imageBytes, Base64.NO_WRAP)
+            val inlineData = JSONObject().apply {
+                put("mime_type", mimeType)
+                put("data", base64Data)
+            }
+            val parts = JSONArray().apply {
+                put(JSONObject().put("inline_data", inlineData))
+                put(JSONObject().put("text", prompt))
+            }
+            val contents = JSONArray().apply {
+                put(JSONObject().apply {
+                    put("role", "user")
+                    put("parts", parts)
+                })
+            }
+            val payload = JSONObject().apply {
+                put("contents", contents)
+                put("generationConfig", JSONObject().apply {
+                    put("temperature", 0.2)
+                    put("maxOutputTokens", 2048)
+                })
+            }
+
+            val request = Request.Builder()
+                .url(url)
+                .post(payload.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+
+            httpClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext ""
+                val bodyStr = response.body?.string() ?: ""
+                val root = JSONObject(bodyStr)
+                val candidates = root.optJSONArray("candidates")
+                val firstCandidate = candidates?.optJSONObject(0)
+                val contentObj = firstCandidate?.optJSONObject("content")
+                val responseParts = contentObj?.optJSONArray("parts")
+                responseParts?.optJSONObject(0)?.optString("text", "")?.trim() ?: ""
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+            ""
+        }
     }
 }

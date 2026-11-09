@@ -1,6 +1,7 @@
 package com.afrizalmy.hybridbrain.data.local
 
 import android.content.Context
+import com.afrizalmy.hybridbrain.data.model.AttachmentMeta
 import com.afrizalmy.hybridbrain.data.model.ChatMessage
 import com.afrizalmy.hybridbrain.data.model.ChatRoom
 import com.afrizalmy.hybridbrain.data.model.DocumentChunk
@@ -91,6 +92,18 @@ class ChatHistoryManager(private val context: Context) {
                                     }
                                 }
 
+                                val aObj = mObj.optJSONObject("attachment")
+                                val attachment = if (aObj != null) {
+                                    AttachmentMeta(
+                                        filename = aObj.optString("filename", "file"),
+                                        localPath = aObj.optString("local_path", ""),
+                                        type = aObj.optString("type", "text"),
+                                        mimeType = aObj.optString("mime_type", "application/octet-stream"),
+                                        sizeKb = aObj.optDouble("size_kb", 0.0),
+                                        isIngestedToRag = aObj.optBoolean("is_ingested", false)
+                                    )
+                                } else null
+
                                 messagesList.add(
                                     ChatMessage(
                                         id = mObj.optString("id", java.util.UUID.randomUUID().toString()),
@@ -99,7 +112,8 @@ class ChatHistoryManager(private val context: Context) {
                                         source = source,
                                         timestamp = timestamp,
                                         contextChunks = contextList,
-                                        ptacLogs = ptacList
+                                        ptacLogs = ptacList,
+                                        attachment = attachment
                                     )
                                 )
                             }
@@ -193,6 +207,18 @@ class ChatHistoryManager(private val context: Context) {
                         ptacArr.put(pObj)
                     }
                     mObj.put("ptac_logs", ptacArr)
+
+                    if (m.attachment != null) {
+                        val aObj = JSONObject().apply {
+                            put("filename", m.attachment.filename)
+                            put("local_path", m.attachment.localPath)
+                            put("type", m.attachment.type)
+                            put("mime_type", m.attachment.mimeType)
+                            put("size_kb", m.attachment.sizeKb)
+                            put("is_ingested", m.attachment.isIngestedToRag)
+                        }
+                        mObj.put("attachment", aObj)
+                    }
 
                     msgsArr.put(mObj)
                 }

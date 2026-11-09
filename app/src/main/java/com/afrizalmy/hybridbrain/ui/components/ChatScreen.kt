@@ -1,23 +1,32 @@
 package com.afrizalmy.hybridbrain.ui.components
 
+import android.graphics.BitmapFactory
+import android.net.Uri
+import android.provider.OpenableColumns
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -32,26 +41,36 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.ArrowDropUp
+import androidx.compose.material.icons.filled.AttachFile
+import androidx.compose.material.icons.filled.Audiotrack
+import androidx.compose.material.icons.filled.BookmarkAdd
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Forum
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.Lightbulb
+import androidx.compose.material.icons.filled.PictureAsPdf
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -70,11 +89,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
-import kotlinx.coroutines.launch
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import com.afrizalmy.hybridbrain.data.model.AttachmentMeta
+import java.io.File
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.afrizalmy.hybridbrain.data.model.ChatMessage
@@ -109,6 +133,22 @@ fun ChatScreen(viewModel: MainViewModel) {
     val roomSheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     var inputPrompt by remember { mutableStateOf("") }
+
+    val filePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            val cursor = context.contentResolver.query(uri, null, null, null, null)
+            val name = cursor?.use {
+                if (it.moveToFirst()) {
+                    val idx = it.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0) it.getString(idx) else null
+                } else null
+            } ?: uri.lastPathSegment ?: "lampiran_dokumen"
+            val mime = context.contentResolver.getType(uri) ?: "application/octet-stream"
+            viewModel.setPendingAttachment(uri, name, mime)
+        }
+    }
 
     val activeRoom = uiState.rooms[uiState.activeRoomId]
     val messages = activeRoom?.messages ?: emptyList()
@@ -217,14 +257,101 @@ fun ChatScreen(viewModel: MainViewModel) {
                     }
                 }
 
+                // Pending Multimodal Attachment Bar (Opsi C: Hybrid)
+                AnimatedVisibility(visible = uiState.pendingAttachment != null) {
+                    uiState.pendingAttachment?.let { att ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 14.dp, vertical = 4.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                            shape = RoundedCornerShape(12.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.2f))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    val iconVector = when (att.type) {
+                                        "image" -> Icons.Default.Image
+                                        "audio" -> Icons.Default.Audiotrack
+                                        "pdf" -> Icons.Default.PictureAsPdf
+                                        else -> Icons.Default.Description
+                                    }
+                                    Icon(
+                                        imageVector = iconVector,
+                                        contentDescription = null,
+                                        tint = BrandIndigo,
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = att.filename,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                        Text(
+                                            text = "${att.type.uppercase()} • ${att.sizeKb} KB",
+                                            fontSize = 10.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    IconButton(
+                                        onClick = { viewModel.clearPendingAttachment() },
+                                        modifier = Modifier.size(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Close,
+                                            contentDescription = "Hapus",
+                                            tint = Color.Gray,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                    }
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Checkbox(
+                                        checked = uiState.ingestToKnowledgeBaseOnSend,
+                                        onCheckedChange = { viewModel.setIngestToKnowledgeBaseOnSend(it) },
+                                        modifier = Modifier.size(24.dp)
+                                    )
+                                    Spacer(modifier = Modifier.width(6.dp))
+                                    Text(
+                                        text = "Simpan permanen ke Knowledge Base Room ini",
+                                        fontSize = 11.sp,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
                 // Input Bar
                 ChatInputBar(
                     text = inputPrompt,
+                    hasAttachment = uiState.pendingAttachment != null,
                     placeholder = "Tulis pertanyaan atau curcol di ${activeRoom?.name ?: "ruang ini"}...",
                     isGenerating = uiState.isGenerating,
                     onTextChanged = { inputPrompt = it },
+                    onAttachClick = {
+                        filePickerLauncher.launch(arrayOf(
+                            "image/*",
+                            "application/pdf",
+                            "audio/*",
+                            "text/*"
+                        ))
+                    },
                     onSend = {
-                        if (inputPrompt.isNotBlank() && !uiState.isGenerating) {
+                        if ((inputPrompt.isNotBlank() || uiState.pendingAttachment != null) && !uiState.isGenerating) {
                             val textToSend = inputPrompt
                             inputPrompt = ""
                             userScrolledUp = false
@@ -258,7 +385,12 @@ fun ChatScreen(viewModel: MainViewModel) {
                 item { Spacer(modifier = Modifier.height(6.dp)) }
 
                 items(messages, key = { it.id }) { msg ->
-                    ChatMessageItem(message = msg)
+                    ChatMessageItem(
+                        message = msg,
+                        onIngestAttachment = { msgId, att ->
+                            viewModel.ingestAttachmentToRoom(msgId, att)
+                        }
+                    )
                 }
 
                 // Live PTAC Log Card
@@ -491,7 +623,10 @@ fun BadgePill(label: String, bg: Color, color: Color) {
 }
 
 @Composable
-fun ChatMessageItem(message: ChatMessage) {
+fun ChatMessageItem(
+    message: ChatMessage,
+    onIngestAttachment: (String, AttachmentMeta) -> Unit = { _, _ -> }
+) {
     val isUser = message.role == MessageRole.USER
     var isInspectorExpanded by remember { mutableStateOf(false) }
     var isPtacExpanded by remember { mutableStateOf(false) }
@@ -531,6 +666,130 @@ fun ChatMessageItem(message: ChatMessage) {
             )
         ) {
             Column(modifier = Modifier.padding(12.dp)) {
+                // Multimodal Attachment Card Preview (Opsi C: Per-bubble attachment)
+                if (message.attachment != null) {
+                    val att = message.attachment
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(bottom = 8.dp),
+                        colors = CardDefaults.cardColors(
+                            containerColor = if (isUser) Color.Black.copy(alpha = 0.25f) else MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+                        ),
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(8.dp)) {
+                            if (att.type == "image") {
+                                val file = File(att.localPath)
+                                if (file.exists()) {
+                                    val bitmap = remember(att.localPath) {
+                                        try {
+                                            BitmapFactory.decodeFile(att.localPath)
+                                        } catch (e: Exception) {
+                                            null
+                                        }
+                                    }
+                                    if (bitmap != null) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = att.filename,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 180.dp)
+                                                .clip(RoundedCornerShape(8.dp)),
+                                            contentScale = ContentScale.Crop
+                                        )
+                                        Spacer(modifier = Modifier.height(6.dp))
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                val icon = when (att.type) {
+                                    "image" -> Icons.Default.Image
+                                    "audio" -> Icons.Default.Audiotrack
+                                    "pdf" -> Icons.Default.PictureAsPdf
+                                    else -> Icons.Default.Description
+                                }
+                                Icon(
+                                    imageVector = icon,
+                                    contentDescription = null,
+                                    tint = if (isUser) Color.White else MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = att.filename,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (isUser) Color.White else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Text(
+                                        text = "${att.type.uppercase()} • ${att.sizeKb} KB",
+                                        fontSize = 10.sp,
+                                        color = if (isUser) Color.White.copy(alpha = 0.7f) else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+
+                            // Tombol / Badge Opsi C: Simpan ke Memori Room
+                            if (isUser) {
+                                Spacer(modifier = Modifier.height(6.dp))
+                                if (att.isIngestedToRag) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        modifier = Modifier
+                                            .background(EdgeEmerald.copy(alpha = 0.2f), RoundedCornerShape(4.dp))
+                                            .padding(horizontal = 6.dp, vertical = 2.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.CheckCircle,
+                                            contentDescription = null,
+                                            tint = EdgeEmerald,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Tersimpan di Knowledge Base Room",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = EdgeEmerald
+                                        )
+                                    }
+                                } else {
+                                    OutlinedButton(
+                                        onClick = { onIngestAttachment(message.id, att) },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White),
+                                        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.height(28.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.BookmarkAdd,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "Simpan ke Memori Room",
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
                 Text(
                     text = message.content,
                     fontSize = 14.sp,
@@ -732,25 +991,40 @@ fun LiveStreamingItem(text: String, engineMode: EngineMode, cloudModel: String, 
 @Composable
 fun ChatInputBar(
     text: String,
+    hasAttachment: Boolean = false,
     placeholder: String,
     isGenerating: Boolean,
     onTextChanged: (String) -> Unit,
+    onAttachClick: () -> Unit,
     onSend: () -> Unit
 ) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 14.dp, vertical = 8.dp),
+            .padding(horizontal = 14.dp, vertical = 6.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(24.dp),
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 10.dp, vertical = 4.dp),
+                .padding(horizontal = 6.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
+            IconButton(
+                onClick = onAttachClick,
+                enabled = !isGenerating,
+                modifier = Modifier.size(38.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Default.AttachFile,
+                    contentDescription = "Lampirkan Media",
+                    tint = if (hasAttachment) BrandIndigo else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+
             OutlinedTextField(
                 value = text,
                 onValueChange = onTextChanged,
@@ -768,11 +1042,11 @@ fun ChatInputBar(
 
             IconButton(
                 onClick = onSend,
-                enabled = text.isNotBlank() && !isGenerating,
+                enabled = (text.isNotBlank() || hasAttachment) && !isGenerating,
                 modifier = Modifier
-                    .size(44.dp)
+                    .size(42.dp)
                     .background(
-                        color = if (text.isNotBlank() && !isGenerating) BrandIndigo else Color.Gray.copy(alpha = 0.3f),
+                        color = if ((text.isNotBlank() || hasAttachment) && !isGenerating) BrandIndigo else Color.Gray.copy(alpha = 0.3f),
                         shape = CircleShape
                     )
             ) {

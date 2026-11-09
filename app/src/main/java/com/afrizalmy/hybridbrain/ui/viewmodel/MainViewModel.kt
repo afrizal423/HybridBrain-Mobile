@@ -9,6 +9,7 @@ import com.afrizalmy.hybridbrain.data.local.PreferenceManager
 import com.afrizalmy.hybridbrain.data.local.SourceSummary
 import com.afrizalmy.hybridbrain.data.local.VectorDatabaseHelper
 import com.afrizalmy.hybridbrain.data.model.AppSettings
+import com.afrizalmy.hybridbrain.data.model.AttachmentMeta
 import com.afrizalmy.hybridbrain.data.model.ChatMessage
 import com.afrizalmy.hybridbrain.data.model.ChatRoom
 import com.afrizalmy.hybridbrain.data.model.DocumentChunk
@@ -54,7 +55,9 @@ data class UiState(
     val routingSuggestion: String? = null,
     val statusToast: String? = null,
     val isIngesting: Boolean = false,
-    val ingestingProgress: Float = 0f
+    val ingestingProgress: Float = 0f,
+    val pendingAttachment: AttachmentMeta? = null,
+    val ingestToKnowledgeBaseOnSend: Boolean = false
 )
 
 class MainViewModel(application: Application) : AndroidViewModel(application) {
@@ -282,16 +285,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun sendMessage(userText: String) {
         val prompt = userText.trim()
-        if (prompt.isEmpty() || _uiState.value.isGenerating) return
+        val attachment = _uiState.value.pendingAttachment
+        val shouldIngest = _uiState.value.ingestToKnowledgeBaseOnSend
+        if (prompt.isEmpty() && attachment == null) return
+        if (_uiState.value.isGenerating) return
 
         val activeId = _uiState.value.activeRoomId
         val activeRoom = _uiState.value.rooms[activeId] ?: return
 
-        // 1. Tambahkan pesan pengguna
+        // 1. Tambahkan pesan pengguna dengan lampiran (Opsi C)
         val userMsg = ChatMessage(
             role = MessageRole.USER,
-            content = prompt,
-            source = MessageSource.SYSTEM
+            content = prompt.ifEmpty { "[Lampiran Media: ${attachment?.filename}]" },
+            source = MessageSource.SYSTEM,
+            attachment = attachment?.copy(isIngestedToRag = shouldIngest)
         )
 
         val updatedMessages = activeRoom.messages + userMsg
@@ -304,7 +311,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 rooms = updatedRooms,
                 isGenerating = true,
                 streamingText = "",
-                livePtacLogs = emptyList()
+                livePtacLogs = emptyList(),
+                pendingAttachment = null,
+                ingestToKnowledgeBaseOnSend = false
             )
         }
 
@@ -320,15 +329,42 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val cloudModel = _uiState.value.settings.cloudModelName
             val systemPrompt = RoomPersonas.getPrompt(activeRoom.persona, activeRoom.customPersona)
 
+            // Opsi C: Ingest ke RAG otomatis jika dipilih pengguna saat mengirim
+            if (shouldIngest && attachment != null) {
+                try {
+                    val file = File(attachment.localPath)
+                    if (file.exists()) {
+                        val chunks = documentLoader.loadUri(
+                            uri = Uri.fromFile(file),
+                            filename = attachment.filename,
+                            roomId = activeId,
+                            apiKey = if (!isOffline) apiKey else null,
+                            edgeEngine = edgeEngine,
+                            cloudEngine = cloudEngine
+                        )
+                        if (chunks.isNotEmpty()) {
+                            val texts = chunks.map { it.content }
+                            val vectors = embeddingEngine.embedBatch(texts, if (!isOffline) apiKey else null)
+                            val provider = if (!isOffline && !apiKey.isNullOrBlank()) "cloud_gemini" else "local_deterministic"
+                            vectorDb.addChunks(chunks, vectors, roomId = activeId, provider = provider)
+                            refreshDocumentCounts()
+                        }
+                    }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                }
+            }
+
             // 3. Retrieval Konteks Dokumen (PTAC Loop vs Single-Shot)
             val retrievedChunks: List<DocumentChunk>
             val ptacLogs = mutableListOf<PTACStateLog>()
 
             val docCount = vectorDb.getDocumentCount(activeId)
+            val effectiveQuery = prompt.ifEmpty { "Jelaskan dan analisis rincian berkas lampiran '${attachment?.filename}'." }
             if (_uiState.value.settings.ptacEnabled && docCount > 0) {
                 val agent = PTACAgent(maxLoops = _uiState.value.settings.ptacMaxLoops)
                 retrievedChunks = agent.runPtacLoop(
-                    query = prompt,
+                    query = effectiveQuery,
                     vectorDb = vectorDb,
                     embeddingEngine = embeddingEngine,
                     cloudEngine = cloudEngine,
@@ -343,17 +379,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 )
             } else if (docCount > 0) {
-                val qVec = embeddingEngine.embedText(prompt, if (!isOffline) apiKey else null)
+                val qVec = embeddingEngine.embedText(effectiveQuery, if (!isOffline) apiKey else null)
                 retrievedChunks = vectorDb.searchSimilar(qVec, topK = 8, threshold = 0.20f, roomId = activeId)
             } else {
                 retrievedChunks = emptyList()
             }
 
-            // 4. Inferensi Asisten (Streaming)
+            // 4. Inferensi Asisten (Streaming Multimodal)
             val flow = if (isOffline) {
-                edgeEngine.generateStream(prompt, retrievedChunks, systemPrompt)
+                val attFile = if (attachment != null) File(attachment.localPath) else null
+                edgeEngine.generateStream(
+                    prompt = effectiveQuery,
+                    contextChunks = retrievedChunks,
+                    systemInstruction = systemPrompt,
+                    attachmentFile = attFile,
+                    attachmentMime = attachment?.mimeType
+                )
             } else {
-                cloudEngine.generateStream(apiKey, cloudModel, prompt, retrievedChunks, systemPrompt)
+                val attBytes = if (attachment != null) {
+                    try { File(attachment.localPath).readBytes() } catch (e: Exception) { null }
+                } else null
+                cloudEngine.generateStream(
+                    apiKey = apiKey,
+                    modelName = cloudModel,
+                    prompt = effectiveQuery,
+                    contextChunks = retrievedChunks,
+                    systemInstruction = systemPrompt,
+                    attachmentBytes = attBytes,
+                    attachmentMime = attachment?.mimeType,
+                    attachmentFilename = attachment?.filename
+                )
             }
 
             val fullResponse = StringBuilder()
@@ -394,6 +449,105 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setPendingAttachment(uri: Uri, filename: String, mimeType: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val cacheDir = File(getApplication<Application>().cacheDir, "attachments")
+                if (!cacheDir.exists()) cacheDir.mkdirs()
+                val safeName = filename.replace("[^a-zA-Z0-9._-]".toRegex(), "_")
+                val localFile = File(cacheDir, "${System.currentTimeMillis()}_$safeName")
+
+                getApplication<Application>().contentResolver.openInputStream(uri)?.use { input ->
+                    localFile.outputStream().use { output ->
+                        input.copyTo(output)
+                    }
+                }
+
+                val ext = filename.substringAfterLast('.', "").lowercase()
+                val attType = when {
+                    mimeType.startsWith("image/") || listOf("png", "jpg", "jpeg", "webp", "bmp").contains(ext) -> "image"
+                    mimeType.startsWith("audio/") || listOf("wav", "mp3", "ogg", "m4a").contains(ext) -> "audio"
+                    mimeType == "application/pdf" || ext == "pdf" -> "pdf"
+                    else -> "text"
+                }
+
+                val sizeKb = (localFile.length() / 1024.0 * 10).toInt() / 10.0
+                val meta = AttachmentMeta(
+                    filename = filename,
+                    localPath = localFile.absolutePath,
+                    type = attType,
+                    mimeType = mimeType.ifBlank { "application/octet-stream" },
+                    sizeKb = sizeKb,
+                    isIngestedToRag = false
+                )
+
+                _uiState.update { it.copy(pendingAttachment = meta) }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uiState.update { it.copy(statusToast = "Gagal memproses lampiran: ${e.message}") }
+            }
+        }
+    }
+
+    fun clearPendingAttachment() {
+        _uiState.update { it.copy(pendingAttachment = null, ingestToKnowledgeBaseOnSend = false) }
+    }
+
+    fun setIngestToKnowledgeBaseOnSend(enabled: Boolean) {
+        _uiState.update { it.copy(ingestToKnowledgeBaseOnSend = enabled) }
+    }
+
+    fun ingestAttachmentToRoom(messageId: String, attachment: AttachmentMeta) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val activeId = _uiState.value.activeRoomId
+            val isOffline = _uiState.value.settings.engineMode == EngineMode.OFFLINE_EDGE
+            val apiKey = _uiState.value.settings.geminiApiKey
+
+            _uiState.update { it.copy(isIngesting = true, statusToast = "Mengindeks '${attachment.filename}' ke memori room...") }
+            try {
+                val file = File(attachment.localPath)
+                if (file.exists()) {
+                    val chunks = documentLoader.loadUri(
+                        uri = Uri.fromFile(file),
+                        filename = attachment.filename,
+                        roomId = activeId,
+                        apiKey = if (!isOffline) apiKey else null,
+                        edgeEngine = edgeEngine,
+                        cloudEngine = cloudEngine
+                    )
+                    if (chunks.isNotEmpty()) {
+                        val texts = chunks.map { it.content }
+                        val vectors = embeddingEngine.embedBatch(texts, if (!isOffline) apiKey else null)
+                        val provider = if (!isOffline && !apiKey.isNullOrBlank()) "cloud_gemini" else "local_deterministic"
+                        vectorDb.addChunks(chunks, vectors, roomId = activeId, provider = provider)
+                    }
+
+                    // Perbarui pesan chat pada state agar tombol berubah menjadi tersimpan
+                    val currentRooms = _uiState.value.rooms.toMutableMap()
+                    val room = currentRooms[activeId]
+                    if (room != null) {
+                        val updatedMsgs = room.messages.map { msg ->
+                            if (msg.id == messageId && msg.attachment != null) {
+                                msg.copy(attachment = msg.attachment.copy(isIngestedToRag = true))
+                            } else {
+                                msg
+                            }
+                        }
+                        currentRooms[activeId] = room.copy(messages = updatedMsgs)
+                        _uiState.update { it.copy(rooms = currentRooms) }
+                        historyManager.saveRooms(currentRooms, activeId)
+                    }
+
+                    refreshDocumentCounts()
+                    _uiState.update { it.copy(isIngesting = false, statusToast = "✅ Berhasil menyimpan '${attachment.filename}' ke Knowledge Base!") }
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                _uiState.update { it.copy(isIngesting = false, statusToast = "⚠️ Gagal mengindeks: ${e.message}") }
+            }
+        }
+    }
+
     // --- DOCUMENT INGESTION (RAG) ---
 
     fun ingestDocuments(files: List<Pair<Uri, String>>, useCloudEmbed: Boolean) {
@@ -410,7 +564,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             files.forEachIndexed { idx, pair ->
                 val uri = pair.first
                 val name = pair.second
-                val chunks = documentLoader.loadUri(uri, name, roomId = activeId)
+                val chunks = documentLoader.loadUri(
+                    uri = uri,
+                    filename = name,
+                    roomId = activeId,
+                    apiKey = apiKey,
+                    edgeEngine = edgeEngine,
+                    cloudEngine = cloudEngine
+                )
                 allChunks.addAll(chunks)
                 _uiState.update { it.copy(ingestingProgress = (idx + 0.5f) / totalFiles) }
             }

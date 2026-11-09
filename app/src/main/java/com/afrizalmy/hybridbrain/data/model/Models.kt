@@ -34,6 +34,15 @@ data class PTACStateLog(
     val isDone: Boolean = false
 )
 
+data class AttachmentMeta(
+    val filename: String,
+    val localPath: String,
+    val type: String, // "image", "audio", "pdf", "text"
+    val mimeType: String,
+    val sizeKb: Double,
+    val isIngestedToRag: Boolean = false
+)
+
 data class ChatMessage(
     val id: String = UUID.randomUUID().toString(),
     val role: MessageRole,
@@ -41,7 +50,8 @@ data class ChatMessage(
     val source: MessageSource = MessageSource.SYSTEM,
     val timestamp: Long = System.currentTimeMillis(),
     val contextChunks: List<DocumentChunk> = emptyList(),
-    val ptacLogs: List<PTACStateLog> = emptyList()
+    val ptacLogs: List<PTACStateLog> = emptyList(),
+    val attachment: AttachmentMeta? = null
 )
 
 data class ChatRoom(
