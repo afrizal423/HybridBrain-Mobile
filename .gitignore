@@ -23,3 +23,8 @@ models/
 *.sqlite
 *.sqlite3
 *.log
+
+# Release signing keys
+*.jks
+*.keystore
+keystore.properties
